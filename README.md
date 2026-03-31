@@ -20,9 +20,23 @@ A high-performance SQL-like client-server database engine implemented in C++20.
 | 4 | 1.56M ops/sec | 2.79M ops/sec | 2.97M ops/sec |
 | 8 | 2.41M ops/sec | 3.05M ops/sec | 3.49M ops/sec |
 
-## Build
+## Prerequisites
 
-Requires GCC 15+ with C++20 support (MSYS2/UCRT64 on Windows).
+- **MSYS2/UCRT64** — Install from [msys2.org](https://www.msys2.org/)
+- **GCC 15+** with C++20 support — Inside MSYS2, run: `pacman -S mingw-w64-ucrt-x86_64-gcc`
+- **Windows 10/11**
+
+## Environment Setup
+
+Every new PowerShell terminal needs the MSYS2 toolchain in PATH:
+
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+```
+
+> **Note:** `build.bat` sets this automatically for compilation, but you still need it when **running** the executables.
+
+## Build
 
 ```bash
 cmd /c build.bat
@@ -32,21 +46,40 @@ This compiles `flexql-server.exe`, `benchmark_flexql.exe`, and `multiclient_benc
 
 ## Run
 
-```bash
-# Start server
-./flexql-server.exe --clean
+The server and client must run in **separate terminals**. Set the PATH in each terminal first.
+
+**Terminal 1 — Start the server:**
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+.\flexql-server.exe --clean
+```
+Keep this terminal open — the server stays running.
+
+**Terminal 2 — Run tests or benchmarks:**
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
 
 # Run unit tests (21/21)
-./benchmark_flexql.exe --unit-test
+.\benchmark_flexql.exe --unit-test
 
-# Run 10M row benchmark
-./benchmark_flexql.exe 10000000
+# Single-client benchmark (1 thread, 10M rows)
+.\benchmark_flexql.exe 10000000
 
-# Multi-client benchmark (8 threads)
-./multiclient_bench.exe --threads 8 --rows 1250000 --mode write
+# Multi-client benchmark — all thread/mode combinations (matches performance table)
+# 1 Thread
+.\multiclient_bench.exe --threads 1 --rows 10000000 --mode write
+.\multiclient_bench.exe --threads 1 --rows 10000000 --mode read
+.\multiclient_bench.exe --threads 1 --rows 10000000 --mode mixed
 
-# Interactive REPL client
-./flexql-client.exe 127.0.0.1 9000
+# 4 Threads
+.\multiclient_bench.exe --threads 4 --rows 2500000 --mode write
+.\multiclient_bench.exe --threads 4 --rows 2500000 --mode read
+.\multiclient_bench.exe --threads 4 --rows 2500000 --mode mixed
+
+# 8 Threads
+.\multiclient_bench.exe --threads 8 --rows 1250000 --mode write
+.\multiclient_bench.exe --threads 8 --rows 1250000 --mode read
+.\multiclient_bench.exe --threads 8 --rows 1250000 --mode mixed
 ```
 
 ## Example
@@ -68,8 +101,9 @@ flexql/
 ├── tests/            # Smoke test and functional tests
 ├── DESIGN_DOCUMENT.md
 └── README.md
-benchmark_flexql.cpp  # Single-client benchmark
-multiclient_bench.cpp # Multi-client benchmark
-build.bat             # Build script (GCC)
-benchmark_results.txt # Performance results
+benchmark/
+├── benchmark_flexql.cpp   # Single-client benchmark
+├── multiclient_bench.cpp  # Multi-client benchmark
+└── benchmark_results.txt  # Performance results
+build.bat                  # Build script (GCC)
 ```

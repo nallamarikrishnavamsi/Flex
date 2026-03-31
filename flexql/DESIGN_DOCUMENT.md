@@ -524,8 +524,9 @@ flexql/
 ├── DESIGN_DOCUMENT.md              # This document
 └── README.md                       # Quick start guide
 
-benchmark_flexql.cpp                # Single-client benchmark (10M rows)
-multiclient_bench.cpp               # Multi-client benchmark (1T/4T/8T)
-benchmark_results.txt               # Performance results
+benchmark/
+├── benchmark_flexql.cpp             # Single-client benchmark (10M rows)
+├── multiclient_bench.cpp            # Multi-client benchmark (1T/4T/8T)
+└── benchmark_results.txt            # Performance results
 build.bat                           # Build script (GCC, Windows)
 ```
