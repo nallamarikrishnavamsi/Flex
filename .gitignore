@@ -1,0 +1,28 @@
+# Build artifacts
+*.exe
+*.o
+*.obj
+build_log.txt
+flexql/bin/
+
+# Data files
+flexql_data/
+flexql/flexql_data/
+
+# Server output
+server_out.txt
+so.txt
+se.txt
+server_err.txt
+
+# Benchmark output logs
+bench_*.txt
+test_results.txt
+
+# IDE / tooling
+.vscode/
+.sfdx/
+
+# Assignment spec images & PDF
+page-*.png
+project_dl_lab.pdf

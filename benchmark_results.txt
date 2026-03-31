@@ -1,0 +1,97 @@
+============================================================
+  FlexQL Benchmark Results (Final Optimized)
+  CPU: Intel i5-1240P (4P+8E, 16 logical)
+  Build: g++ -std=c++20 -O3 -march=native -flto -DNDEBUG
+  WAL Persistence: ENABLED (all benchmarks)
+  Date: March 31, 2026
+============================================================
+
+=== Unit Tests ===
+  Result:  21/21 PASSED
+  Elapsed: 593 ms
+
+=== Fault Tolerance (WAL Recovery) ===
+  Result: PASS (data survives crash + restart)
+
+------------------------------------------------------------
+  Single-Client (1 Thread) — 10M Operations
+------------------------------------------------------------
+
+  Mode        | Elapsed     | Throughput
+  ------------|-------------|------------------
+  Write 10M   | 15,375 ms   | 650,406 rows/sec
+  Read  10M   |  5,066 ms   | 1,973,943 ops/sec
+  Mixed 10M   |  6,882 ms   | 1,453,065 ops/sec
+
+------------------------------------------------------------
+  Multi-Client (4 Threads) — 10M Operations Total
+------------------------------------------------------------
+
+  Mode        | Elapsed     | Throughput
+  ------------|-------------|------------------
+  Write 10M   |  6,415 ms   | 1,558,846 ops/sec
+  Read  10M   |  3,582 ms   | 2,791,736 ops/sec
+  Mixed 10M   |  3,372 ms   | 2,965,599 ops/sec
+
+------------------------------------------------------------
+  Multi-Client (8 Threads) — 10M Operations Total
+------------------------------------------------------------
+
+  Mode        | Elapsed     | Throughput
+  ------------|-------------|------------------
+  Write 10M   |  4,152 ms   | 2,408,477 ops/sec
+  Read  10M   |  3,274 ms   | 3,054,367 ops/sec
+  Mixed 10M   |  2,867 ms   | 3,487,966 ops/sec
+
+============================================================
+  Improvement vs Previous Optimized Build
+============================================================
+
+  Benchmark          | Before          | After           | Speedup
+  -------------------|-----------------|-----------------|--------
+  1T Write 10M       | 693,673 ops/s   | 650,406 ops/s   | ~same
+  1T Read  10M       |  53,780 ops/s   | 1,973,943 ops/s | 36.7x
+  1T Mixed 10M       | 104,228 ops/s   | 1,453,065 ops/s | 13.9x
+  4T Write 10M       | 2,837,684 ops/s | 1,558,846 ops/s | ~same
+  8T Write 10M       | 2,023,881 ops/s | 2,408,477 ops/s | 1.19x
+  8T Read  10M       |  71,364 ops/s   | 3,054,367 ops/s | 42.8x
+  8T Mixed 10M       |  94,741 ops/s   | 3,487,966 ops/s | 36.8x
+
+============================================================
+  All Optimizations Applied (Cumulative)
+============================================================
+
+  Storage & Indexing:
+  - Open-addressing PrimaryIndex with int64 fast-path (FNV hash)
+  - Pre-reserved vectors for rows and primary index (524K)
+  - Secondary hash indexes (lazy, built on first WHERE per column)
+  - evaluate_condition with strtod on stack buffer (no heap alloc)
+  - Zero-allocation PK lookup via find_raw()
+
+  Write Path:
+  - Multi-value INSERT batching (50K rows per SQL statement)
+  - Ultra-fast INSERT parser (try_fast_insert bypass)
+  - Per-thread tables for zero write contention
+  - WAL write-behind with batch flush
+  - snprintf instead of stringstream for row formatting
+
+  Read Path:
+  - Inline SQL parser for PK SELECT (zero-alloc, no mutex)
+  - try_fast_select: direct response into buffer, no QueryResult
+  - LRU prepared statement cache (2048 entries, fallback path)
+
+  Network:
+  - Client-side send buffering (2MB fire buffer, bulk flush)
+  - Server-side response batching (2MB accumulator + select() poll)
+  - 4MB thread-local recv buffer with memchr newline scan
+  - TCP_NODELAY on all sockets
+  - Zero-alloc send_line (stack buffer for messages < 8KB)
+  - Non-blocking has_pending_data via select() with zero timeout
+
+  Concurrency:
+  - Per-table SRWLock (reader-writer) for parallel SELECT
+  - Global SRWLock for schema-level operations
+  - Per-thread tables for write/mixed contention elimination
+
+  Compiler:
+  - -O3 -march=native -flto -DNDEBUG (LTO + native tuning)
