@@ -1,6 +1,6 @@
 # FlexQL Design Document
 
-**Repository**: [GitHub Link]  
+**Repository**: https://github.com/nallamarikrishnavamsi/Flex  
 **Author**: Nallamari Krishna Vamsi 
 **Date**: March 31, 2026  
 **Language**: C++20 (GCC 15.2, MSYS2/UCRT64)  
@@ -521,10 +521,11 @@ flexql/
 ├── tests/
 │   ├── smoke.cpp                   # Basic smoke test
 │   └── functional_test.cpp         # Comprehensive functional tests
-├── scripts/
-│   └── flexql_benchmark.py         # Benchmark data generator
-├── bin/                            # Compiled executables
-├── CMakeLists.txt                  # CMake build configuration
-├── Makefile                        # GNU Make build configuration
+├── DESIGN_DOCUMENT.md              # This document
 └── README.md                       # Quick start guide
+
+benchmark_flexql.cpp                # Single-client benchmark (10M rows)
+multiclient_bench.cpp               # Multi-client benchmark (1T/4T/8T)
+benchmark_results.txt               # Performance results
+build.bat                           # Build script (GCC, Windows)
 ```

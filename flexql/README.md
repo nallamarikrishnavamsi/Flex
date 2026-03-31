@@ -19,24 +19,24 @@ A simplified SQL-like client-server database driver in C++.
 
 ## Build
 
-```powershell
-cd flexql
-cmake -S . -B build
-cmake --build build --config Release
+From the project root directory:
+
+```bash
+cmd /c build.bat
 ```
 
 ## Run
 
 Terminal 1:
 
-```powershell
-.\build\Release\flexql-server.exe 9000
+```bash
+./flexql-server.exe --clean
 ```
 
 Terminal 2:
 
-```powershell
-.\build\Release\flexql-client.exe 127.0.0.1 9000
+```bash
+./flexql-client.exe 127.0.0.1 9000
 ```
 
 ## Example
@@ -53,6 +53,6 @@ SELECT NAME FROM STUDENT WHERE ID = 1;
 
 Start server, then run:
 
-```powershell
-.\build\Release\flexql-smoke.exe 127.0.0.1 9000
+```bash
+./flexql-smoke.exe 127.0.0.1 9000
 ```
