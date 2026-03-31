@@ -1,8 +1,7 @@
 # FlexQL Design Document
 
-**Repository**: https://github.com/nallamarikrishnavamsi/Flex  
-**Author**: Nallamari Krishna Vamsi 
-**Date**: March 31, 2026  
+**Repository**: [https://github.com/nallamarikrishnavamsi/Flex](https://github.com/nallamarikrishnavamsi/Flex)  
+**Author**: Nallamari Krishna Vamsi  
 **Language**: C++20 (GCC 15.2, MSYS2/UCRT64)  
 **Platform**: Windows 11, Intel i5-1240P (4P+8E, 16 logical cores)
 
