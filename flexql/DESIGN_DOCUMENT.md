@@ -8,32 +8,33 @@
 
 ## 1. System Architecture
 
-FlexQL is a client-server SQL-like database driver implemented entirely in C++20. The system consists of two executables:
+FlexQL is a client-server SQL-like database driver implemented entirely in C++20. The system consists of three executables:
 
 - **flexql-server**: Multi-threaded TCP server that hosts the database engine
-- **flexql-client**: Interactive REPL terminal that communicates with the server via the FlexQL C API
+- **benchmark_flexql**: Single-client benchmark and unit test runner
+- **multiclient_bench**: Multi-client benchmark with configurable threads and modes
 
 ### Architecture Diagram
 
 ```
-┌──────────────┐    TCP/IP     ┌────────────────────────────┐
-│ flexql-client│◄─────────────►│     flexql-server          │
-│   (REPL)     │  Line-based   │                            │
-│              │  protocol     │  ┌──────────────────────┐  │
-│  flexql_open │               │  │   DatabaseEngine     │  │
-│  flexql_exec │               │  │  ┌────────────────┐  │  │
-│  flexql_close│               │  │  │   SqlParser     │  │  │
-│  flexql_free │               │  │  ├────────────────┤  │  │
-└──────────────┘               │  │  │ Table Storage   │  │  │
-                               │  │  │ (row-major)     │  │  │
-┌──────────────┐               │  │  ├────────────────┤  │  │
-│ flexql-client│◄─────────────►│  │  │ Primary Index   │  │  │
-│  (thread 2)  │               │  │  │ (hash-map)      │  │  │
-└──────────────┘               │  │  ├────────────────┤  │  │
-                               │  │  │ LRU Cache       │  │  │
-                               │  │  └────────────────┘  │  │
-                               │  └──────────────────────┘  │
-                               └────────────────────────────┘
++----------------+    TCP/IP     +------------------------------+
+|  benchmark     |<------------>|     flexql-server              |
+|  (client 1)    |  Line-based  |                                |
+|                |  protocol    |  +------------------------+    |
+|  flexql_open   |              |  |   DatabaseEngine       |    |
+|  flexql_exec   |              |  |  +------------------+  |    |
+|  flexql_close  |              |  |  |   SqlParser       | |    |
+|  flexql_free   |              |  |  +------------------+  |    |
++----------------+              |  |  | Table Storage     | |    |
+                                |  |  | (row-major)       | |    |
++----------------+              |  |  +------------------+  |    |
+|  benchmark     |<------------>|  |  | Primary Index     | |    |
+|  (client 2)    |              |  |  | (hash-map)        | |    |
++----------------+              |  |  +------------------+  |    |
+                                |  |  | LRU Cache         | |    |
+                                |  |  +------------------+  |    |
+                                |  +------------------------+    |
+                                +--------------------------------+
 ```
 
 ## 2. Data Storage Design
@@ -219,14 +220,14 @@ This guarantees:
 
 ```
 Thread 1 (Client A)              Thread 2 (Client B)
-    │                                │
-    ▼                                ▼
+    |                                |
+    v                                v
   execute("INSERT ...")            execute("SELECT ...")
-    │                                │
-    ├─── acquire table W-lock ───────┤ (concurrent — different lock types)
-    │    execute_insert()            ├─── acquire table R-lock
-    │    release W-lock              │    execute_select()
-    │                                │    release R-lock
+    |                                |
+    +--- acquire table W-lock -------+ (concurrent -- different lock types)
+    |    execute_insert()            +--- acquire table R-lock
+    |    release W-lock              |    execute_select()
+    |                                |    release R-lock
 ```
 
 ### Performance Impact (Final Optimized Build)
@@ -321,18 +322,19 @@ The API follows the SQLite callback pattern, making it familiar and easy to use.
 FlexQL uses a **Write-Ahead Log (WAL)** for durable persistence. All mutating SQL statements (`CREATE TABLE`, `INSERT`, `DROP TABLE`) are appended to a log file **before** being executed in-memory. On server restart, the WAL is replayed to rebuild the in-memory state.
 
 ```
-┌──────────────┐    execute()    ┌──────────────────────┐
-│ SQL Statement │───────────────►│   DatabaseEngine     │
-└──────────────┘                │                      │
-                                │  1. Append to WAL    │
-                                │     (buffered I/O)   │
-                                │  2. Execute in-memory│
-                                │  3. Return result    │
-                                └────────┬─────────────┘
-                                         │
-                                    ┌────▼────┐
-                                    │ wal.log │  (on disk)
-                                    └─────────┘
++----------------+    execute()    +------------------------+
+| SQL Statement  |--------------->|   DatabaseEngine       |
++----------------+                |                        |
+                                  |  1. Append to WAL      |
+                                  |     (buffered I/O)     |
+                                  |  2. Execute in-memory  |
+                                  |  3. Return result      |
+                                  +-----------+------------+
+                                              |
+                                              v
+                                        +-----------+
+                                        |  wal.log  |  (on disk)
+                                        +-----------+
 ```
 
 ### WAL Format
@@ -452,35 +454,68 @@ To push FlexQL's architecture closer to production-grade relational databases, w
 
 ## 12. Compilation and Execution
 
+### Prerequisites
+
+- **MSYS2/UCRT64** — Install from [msys2.org](https://www.msys2.org/)
+- **GCC 15+** with C++20 support — Inside MSYS2, run: `pacman -S mingw-w64-ucrt-x86_64-gcc`
+- **Windows 10/11**
+
+### Environment Setup
+
+Every new PowerShell terminal needs the MSYS2 toolchain in PATH:
+
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+```
+
+> **Note:** `build.bat` sets this automatically for compilation, but you still need it when **running** the executables (they depend on MSYS2 DLLs).
+
 ### Build (using build.bat on Windows)
 
 ```bash
-# From the project root directory
 cmd /c build.bat
 ```
 
-This compiles `flexql-server.exe`, `flexql-client.exe`, `benchmark_flexql.exe`, and `multiclient_bench.exe` using GCC with `-std=c++20 -O3 -march=native -flto -DNDEBUG`.
+This compiles `flexql-server.exe`, `benchmark_flexql.exe`, and `multiclient_bench.exe` using GCC with `-std=c++20 -O3 -march=native -flto -DNDEBUG`.
 
 ### Run
 
-```bash
-# Terminal 1: Start server (clean start for benchmarks)
-./flexql-server.exe --clean
+The server and benchmarks must run in **separate terminals**. Set the PATH in each terminal first.
 
-# Terminal 1: Start server (with WAL replay for persistence)
-./flexql-server.exe
+**Terminal 1 — Start the server:**
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+.\flexql-server.exe --clean     # clean start (truncates WAL)
+# OR
+.\flexql-server.exe             # with WAL replay (persistent)
+```
+Keep this terminal open — the server stays running.
 
-# Terminal 2: Run unit tests only
-./benchmark_flexql.exe --unit-test
+**Terminal 2 — Run tests or benchmarks:**
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
 
-# Terminal 2: Run benchmark + unit tests (10 million rows)
-./benchmark_flexql.exe 10000000
+# Unit tests (21/21)
+.\benchmark_flexql.exe --unit-test
 
-# Terminal 2: Run multi-client benchmark (8 threads, 10M total)
-./multiclient_bench.exe --threads 8 --rows 1250000 --mode write
+# Single-client benchmark (1 thread, 10M rows)
+.\benchmark_flexql.exe 10000000
 
-# Terminal 3: Interactive client REPL
-./flexql-client.exe 127.0.0.1 9000
+# Multi-client benchmark — all thread/mode combinations
+# 1 Thread (10M total)
+.\multiclient_bench.exe --threads 1 --rows 10000000 --mode write
+.\multiclient_bench.exe --threads 1 --rows 10000000 --mode read
+.\multiclient_bench.exe --threads 1 --rows 10000000 --mode mixed
+
+# 4 Threads (10M total = 2.5M per thread)
+.\multiclient_bench.exe --threads 4 --rows 2500000 --mode write
+.\multiclient_bench.exe --threads 4 --rows 2500000 --mode read
+.\multiclient_bench.exe --threads 4 --rows 2500000 --mode mixed
+
+# 8 Threads (10M total = 1.25M per thread)
+.\multiclient_bench.exe --threads 8 --rows 1250000 --mode write
+.\multiclient_bench.exe --threads 8 --rows 1250000 --mode read
+.\multiclient_bench.exe --threads 8 --rows 1250000 --mode mixed
 ```
 
 ## 13. Folder Structure
@@ -521,8 +556,7 @@ flexql/
 ├── tests/
 │   ├── smoke.cpp                   # Basic smoke test
 │   └── functional_test.cpp         # Comprehensive functional tests
-├── DESIGN_DOCUMENT.md              # This document
-└── README.md                       # Quick start guide
+└── DESIGN_DOCUMENT.md              # This document
 
 benchmark/
 ├── benchmark_flexql.cpp             # Single-client benchmark (10M rows)
