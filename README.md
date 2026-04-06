@@ -12,13 +12,13 @@ A high-performance SQL-like client-server database engine implemented in C++20.
 - **Write-Ahead Log (WAL)** for crash recovery with double-buffer design
 - **C-compatible API**: `flexql_open`, `flexql_exec`, `flexql_close`, `flexql_free`
 
-## Performance (10M Rows, Intel i5-1240P)
+## Performance (10M Rows, Intel i5-1240P, --nowal mode)
 
 | Threads | Write | Read | Mixed |
 |---------|-------|------|-------|
-| 1 | 650K ops/sec | 1.97M ops/sec | 1.45M ops/sec |
-| 4 | 1.56M ops/sec | 2.79M ops/sec | 2.97M ops/sec |
-| 8 | 2.41M ops/sec | 3.05M ops/sec | 3.49M ops/sec |
+| 1 | 1.79M ops/sec | 2.27M ops/sec | 1.74M ops/sec |
+| 4 | 2.64M ops/sec | 4.61M ops/sec | 5.13M ops/sec |
+| 8 | 2.42M ops/sec | 4.88M ops/sec | 6.83M ops/sec |
 
 ## Prerequisites
 

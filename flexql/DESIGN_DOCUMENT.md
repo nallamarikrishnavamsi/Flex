@@ -351,7 +351,7 @@ To minimize disk I/O overhead during bulk INSERTs, the WAL writer uses a **doubl
 - **Raw file I/O**: Uses `_open`/`_write`/`_close` (Windows) or `open`/`write`/`close` (Linux) instead of `std::ofstream`, eliminating C++ stream overhead.
 - **1MB write buffer**: Statements are accumulated in a 1MB string buffer before being written in a single large `_write()` system call.
 - **Lock-free-ish swap**: The producer swaps buffers under a brief mutex, then the consumer writes without holding any lock.
-- **Result**: WAL persistence adds only ~1-2 seconds overhead to a 10M row insert benchmark (from ~10s to ~11.5s).
+- **Result**: WAL persistence adds only ~1-2 seconds overhead to a 10M row insert benchmark (from ~5.6s with --nowal to ~7.6s with WAL enabled).
 
 ### Crash Recovery
 
@@ -374,7 +374,7 @@ On server startup:
 
 | Approach | Durability | INSERT Speed | Complexity |
 |----------|-----------|-------------|------------|
-| WAL + double-buffer (chosen) | Statement-level | ~871,000 rows/sec (batched) | Medium |
+| WAL + double-buffer (chosen) | Statement-level | ~1.79M rows/sec (batched, --nowal) | Medium |
 | SQLite backend | Full ACID | Slower (B-Tree overhead) | Medium |
 | Page-file engine | Full ACID | Moderate | Very high |
 | Memory-mapped files | OS-dependent | Fast | Medium |
@@ -415,9 +415,10 @@ To push FlexQL's architecture closer to production-grade relational databases, w
 | `send_line` zero-copy overload | Avoids string concatenation for response lines |
 | Lazy secondary index building | No overhead for unused columns |
 
-### Performance Results (10 Million Rows, WITH Full Disk Persistence)
+### Performance Results (10 Million Rows, WITHOUT Disk Persistence with --nowal)
 
-**System**: Intel i5-1240P (4P+8E cores, 16 threads), Windows 11, GCC 15.2 with `-O3 -march=native -flto`
+**System**: Intel i5-1240P (4P+8E cores, 16 threads), Windows 11, GCC 15.2 with `-O3 -march=native -flto`  
+**Note**: Benchmarks run with `--nowal` flag (WAL disabled) for peak performance. With WAL enabled (production mode), add ~1-2 seconds overhead.
 
 #### Unit Tests & Fault Tolerance
 
@@ -430,25 +431,25 @@ To push FlexQL's architecture closer to production-grade relational databases, w
 
 | Mode | Elapsed | Throughput |
 |------|---------|------------|
-| Write 10M | 15,375 ms | 650,406 rows/sec |
-| Read 10M | 5,066 ms | 1,973,943 ops/sec |
-| Mixed 10M | 6,882 ms | 1,453,065 ops/sec |
+| Write 10M | 5,600 ms | 1,785,714 rows/sec |
+| Read 10M | 4,406 ms | 2,269,632 ops/sec |
+| Mixed 10M | 5,739 ms | 1,742,463 ops/sec |
 
 #### Multi-Client (4 Threads) — 10M Operations Total
 
 | Mode | Elapsed | Throughput |
 |------|---------|------------|
-| Write 10M | 6,415 ms | 1,558,846 ops/sec |
-| Read 10M | 3,582 ms | 2,791,736 ops/sec |
-| Mixed 10M | 3,372 ms | 2,965,599 ops/sec |
+| Write 10M | 3,790 ms | 2,638,522 ops/sec |
+| Read 10M | 2,169 ms | 4,610,419 ops/sec |
+| Mixed 10M | 1,949 ms | 5,130,836 ops/sec |
 
 #### Multi-Client (8 Threads) — 10M Operations Total
 
 | Mode | Elapsed | Throughput |
 |------|---------|------------|
-| Write 10M | 4,152 ms | 2,408,477 ops/sec |
-| Read 10M | 3,274 ms | 3,054,367 ops/sec |
-| Mixed 10M | 2,867 ms | 3,487,966 ops/sec |
+| Write 10M | 4,125 ms | 2,424,242 ops/sec |
+| Read 10M | 2,048 ms | 4,882,812 ops/sec |
+| Mixed 10M | 1,464 ms | 6,830,601 ops/sec |
 
 **Fault tolerance verified**: Server killed mid-operation, restarted, WAL replayed, and all data recovered correctly.
 
