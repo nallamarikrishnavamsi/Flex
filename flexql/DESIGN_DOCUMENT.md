@@ -309,10 +309,34 @@ int  flexql_close(FlexQL *db);
 int  flexql_exec(FlexQL *db, const char *sql,
                  int (*callback)(void*, int, char**, char**),
                  void *arg, char **errmsg);
+int  flexql_exec_fire(FlexQL *db, const char *sql);     // Pipelining: queue query
+int  flexql_drain(FlexQL *db, int count);               // Pipelining: drain responses
 void flexql_free(void *ptr);
 ```
 
-The API follows the SQLite callback pattern, making it familiar and easy to use.
+### Core API
+
+The API follows the SQLite callback pattern, making it familiar and easy to use:
+- `flexql_open()` — Connect to server
+- `flexql_exec()` — Execute query with callback for each row
+- `flexql_close()` — Close connection
+- `flexql_free()` — Free error strings
+
+### Pipelining API (High-Throughput Bulk Operations)
+
+For benchmarks with 10M operations, the fire/drain API batches multiple queries into fewer TCP sends:
+- `flexql_exec_fire(db, sql)` — Queue a query into 2MB client-side send buffer (does NOT wait for response)
+- `flexql_drain(db, count)` — Flush buffered queries and read N responses (discarding result data)
+
+**Example**: Insert 1M rows with minimal network overhead:
+```c
+for (int i = 0; i < 1000000; i++) {
+    char sql[256];
+    snprintf(sql, sizeof(sql), "INSERT INTO t VALUES (%d, 'user%d');", i, i);
+    flexql_exec_fire(db, sql);  // Queue (no response read yet)
+}
+flexql_drain(db, 1000000);      // Flush & drain all responses at once
+```
 
 ## 10. Persistent Storage (Write-Ahead Log)
 
@@ -546,15 +570,15 @@ flexql/
 │       └── wal_writer.hpp          # Write-Ahead Log header
 ├── src/
 │   ├── client/
-│   │   ├── client_main.cpp         # REPL client entry point
-│   │   └── flexql_api.cpp          # C API implementation
+│   │   ├── client_main.cpp         # Interactive REPL client (not built in build.bat)
+│   │   └── flexql_api.cpp          # C API implementation (compiled into benchmarks)
 │   ├── network/
 │   │   └── socket_utils.cpp        # Cross-platform socket utilities
 │   ├── parser/
 │   │   └── sql_parser.cpp          # Manual recursive descent parser
 │   ├── server/
 │   │   ├── server.cpp              # Multi-threaded server
-│   │   └── server_main.cpp         # Server entry point (--clean, --data-dir)
+│   │   └── server_main.cpp         # Server entry point
 │   └── storage/
 │       ├── database_engine.cpp     # Query execution engine + WAL integration
 │       └── wal_writer.cpp          # Write-Ahead Log implementation
@@ -562,12 +586,15 @@ flexql/
 │   └── wal.log                     # Write-Ahead Log file
 ├── tests/
 │   ├── smoke.cpp                   # Basic smoke test
-│   └── functional_test.cpp         # Comprehensive functional tests
+│   └── functional_test.cpp         # Comprehensive functional tests (21 unit tests)
 └── DESIGN_DOCUMENT.md              # This document
+└── DESIGN_DOCUMENT.pdf             # PDF export
 
 benchmark/
-├── benchmark_flexql.cpp             # Single-client benchmark (10M rows)
+├── benchmark_flexql.cpp             # Single-client benchmark (10M rows, 21 unit tests)
 ├── multiclient_bench.cpp            # Multi-client benchmark (1T/4T/8T)
-└── benchmark_results.txt            # Performance results
-build.bat                           # Build script (GCC, Windows)
+└── benchmark_results.txt            # Actual performance results
+
+build.bat                           # Build script (compiles 3 executables)
+README.md                           # Quick start guide
 ```
