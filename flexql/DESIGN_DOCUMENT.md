@@ -367,6 +367,7 @@ On server startup:
 |------|----------|
 | `./flexql-server 9000` | Normal start with WAL replay (persistent) |
 | `./flexql-server --clean 9000` | Truncate WAL first, then start fresh |
+| `./flexql-server --nowal 9000` | Disable WAL persistence (benchmark mode, no recovery) |
 | `./flexql-server --data-dir /path 9000` | Custom data directory |
 
 ### Trade-offs vs. Other Approaches
