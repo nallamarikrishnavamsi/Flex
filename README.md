@@ -51,6 +51,14 @@ The server and client must run in **separate terminals**. Set the PATH in each t
 **Terminal 1 — Start the server:**
 ```powershell
 $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+
+# Option A: Production mode (WITH WAL persistence)
+.\flexql-server.exe
+
+# Option B: Benchmark mode (WITHOUT WAL for pure performance)
+.\flexql-server.exe --nowal
+
+# Option C: Fresh start (truncate WAL, then enable it)
 .\flexql-server.exe --clean
 ```
 Keep this terminal open — the server stays running.
