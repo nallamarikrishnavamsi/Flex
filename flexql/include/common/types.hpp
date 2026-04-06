@@ -14,7 +14,9 @@
 #include <chrono>
 #include <climits>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
+#include <new>
 #include <string>
 #include <string_view>
 #include <unordered_map>

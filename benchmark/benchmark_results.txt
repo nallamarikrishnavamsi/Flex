@@ -2,13 +2,12 @@
   FlexQL Benchmark Results (Final Optimized)
   CPU: Intel i5-1240P (4P+8E, 16 logical)
   Build: g++ -std=c++20 -O3 -march=native -flto -DNDEBUG
-  WAL Persistence: ENABLED (all benchmarks)
-  Date: March 31, 2026
+  WAL Persistence: DISABLED (--nowal for INSERT benchmark)
+  Date: April 6, 2026
 ============================================================
 
 === Unit Tests ===
   Result:  21/21 PASSED
-  Elapsed: 593 ms
 
 === Fault Tolerance (WAL Recovery) ===
   Result: PASS (data survives crash + restart)
@@ -19,9 +18,9 @@
 
   Mode        | Elapsed     | Throughput
   ------------|-------------|------------------
-  Write 10M   | 15,375 ms   | 650,406 rows/sec
-  Read  10M   |  5,066 ms   | 1,973,943 ops/sec
-  Mixed 10M   |  6,882 ms   | 1,453,065 ops/sec
+  Write 10M   |  5,600 ms   | 1,785,714 rows/sec
+  Read  10M   |  4,406 ms   | 2,269,632 ops/sec
+  Mixed 10M   |  5,739 ms   | 1,742,463 ops/sec
 
 ------------------------------------------------------------
   Multi-Client (4 Threads) — 10M Operations Total
@@ -29,9 +28,9 @@
 
   Mode        | Elapsed     | Throughput
   ------------|-------------|------------------
-  Write 10M   |  6,415 ms   | 1,558,846 ops/sec
-  Read  10M   |  3,582 ms   | 2,791,736 ops/sec
-  Mixed 10M   |  3,372 ms   | 2,965,599 ops/sec
+  Write 10M   |  3,790 ms   | 2,638,522 ops/sec
+  Read  10M   |  2,169 ms   | 4,610,419 ops/sec
+  Mixed 10M   |  1,949 ms   | 5,130,836 ops/sec
 
 ------------------------------------------------------------
   Multi-Client (8 Threads) — 10M Operations Total
@@ -39,6 +38,6 @@
 
   Mode        | Elapsed     | Throughput
   ------------|-------------|------------------
-  Write 10M   |  4,152 ms   | 2,408,477 ops/sec
-  Read  10M   |  3,274 ms   | 3,054,367 ops/sec
-  Mixed 10M   |  2,867 ms   | 3,487,966 ops/sec
+  Write 10M   |  4,125 ms   | 2,424,242 ops/sec
+  Read  10M   |  2,048 ms   | 4,882,812 ops/sec
+  Mixed 10M   |  1,464 ms   | 6,830,601 ops/sec

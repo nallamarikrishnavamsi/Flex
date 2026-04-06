@@ -988,7 +988,12 @@ bool DatabaseEngine::try_fast_insert(std::string& sql, std::string& err) {
         while (pos <= last_close && (std::isspace(static_cast<unsigned char>(s[pos])) || s[pos] == ',')) ++pos;
     }
 
-    // ── Phase 3: Acquire lock, materialize strings, index, and insert ──
+    // ── Phase 3: Acquire lock, resize table rows, materialize+index in-place ──
+    // Instead of creating an intermediate batch_rows vector and then push_back-ing,
+    // directly resize t.rows and assign values in-place. This eliminates:
+    //   - 250K default Row constructions (batch_rows.resize)
+    //   - 250K push_back(std::move(row)) operations
+    //   - The batch_rows heap allocation entirely
     {
         ScopedReaderLock rlock(lock_);
         auto it = tables_.find(tname);
@@ -996,31 +1001,44 @@ bool DatabaseEngine::try_fast_insert(std::string& sql, std::string& err) {
         Table& t = it->second;
         ScopedWriterLock tlock(*t.table_lock);
 
-        std::size_t needed = t.rows.size() + nrows_parsed;
-        if (t.rows.capacity() < needed)
-            t.rows.reserve(needed * 2);
-        if (t.primary_index.capacity() * 3 / 4 < needed)
-            t.primary_index.reserve(needed * 2);
+        const std::size_t base = t.rows.size();
+        const std::size_t final_size = base + nrows_parsed;
+
+        // Aggressive pre-reserve to avoid mid-insert rehash
+        if (t.rows.capacity() < final_size) {
+            std::size_t new_cap = t.rows.capacity() == 0 ? 524288 : t.rows.capacity();
+            while (new_cap < final_size) new_cap *= 2;
+            t.rows.reserve(new_cap);
+        }
+        // Pre-size t.rows — default-constructs Row objects (empty values vector)
+        t.rows.resize(final_size);
+
+        // Ensure PrimaryIndex has enough capacity
+        std::size_t pi_needed = t.primary_index.size() + nrows_parsed;
+        if (t.primary_index.capacity() * 3 / 4 < pi_needed) {
+            t.primary_index.reserve(pi_needed * 2);
+        }
 
         const bool check_secondary = t.has_secondary_indexes;
-        constexpr std::size_t PF_DIST = 8;
+        constexpr std::size_t PF_DIST = 4;
 
         for (std::size_t r = 0; r < nrows_parsed; ++r) {
-            // Prefetch future hash slot to hide memory latency
+            // Prefetch future hash slot
             if (pk_is_numeric && r + PF_DIST < nrows_parsed) {
                 t.primary_index.prefetch_int(pk_vals[r + PF_DIST]);
             }
 
-            std::size_t ref_base = r * ncols;
-            Row row;
-            row.values.reserve(ncols);
+            // Materialize row values directly into t.rows[base + r]
+            Row& row = t.rows[base + r];
+            row.values.resize(ncols);
             row.expires_at = expires;
+            std::size_t ref_base = r * ncols;
             for (std::size_t c = 0; c < ncols; ++c) {
                 const auto& vr = val_refs[ref_base + c];
-                row.values.emplace_back(s + vr.off, vr.len);
+                row.values[c].assign(s + vr.off, vr.len);
             }
 
-            std::size_t new_idx = t.rows.size();
+            const std::size_t new_idx = base + r;
             std::pair<PrimaryIndex::Entry*, bool> emplace_result;
             if (pk_is_numeric) {
                 emplace_result = t.primary_index.emplace_int_direct(pk_vals[r], new_idx);
@@ -1028,18 +1046,33 @@ bool DatabaseEngine::try_fast_insert(std::string& sql, std::string& err) {
                 emplace_result = t.primary_index.emplace(row.values[0], new_idx);
             }
             if (!emplace_result.second) {
+                // Duplicate PK — shrink back and report error
+                // (Can't easily rollback partial inserts, but duplicate PKs are rare)
+                t.rows.resize(base + r);
                 auto now = std::chrono::system_clock::now();
                 auto pit = emplace_result.first;
                 if (pit->value < t.rows.size() && t.rows[pit->value].expires_at <= now) {
                     cleanup_expired_locked(t);
-                    new_idx = t.rows.size();
+                    // Retry: re-expand and continue (expensive but rare path)
+                    t.rows.resize(base + r + 1);
+                    Row& retry_row = t.rows[base + r];
+                    retry_row.values.resize(ncols);
+                    retry_row.expires_at = expires;
+                    for (std::size_t c = 0; c < ncols; ++c) {
+                        const auto& vr = val_refs[ref_base + c];
+                        retry_row.values[c].assign(s + vr.off, vr.len);
+                    }
                     std::pair<PrimaryIndex::Entry*, bool> emplace_result2;
                     if (pk_is_numeric) {
-                        emplace_result2 = t.primary_index.emplace_int_direct(pk_vals[r], new_idx);
+                        emplace_result2 = t.primary_index.emplace_int_direct(pk_vals[r], base + r);
                     } else {
-                        emplace_result2 = t.primary_index.emplace(row.values[0], new_idx);
+                        emplace_result2 = t.primary_index.emplace(retry_row.values[0], base + r);
                     }
-                    if (!emplace_result2.second) { err = "Duplicate primary key"; return true; }
+                    if (!emplace_result2.second) {
+                        t.rows.resize(base + r);
+                        err = "Duplicate primary key";
+                        return true;
+                    }
                 } else {
                     err = "Duplicate primary key";
                     return true;
@@ -1051,7 +1084,6 @@ bool DatabaseEngine::try_fast_insert(std::string& sql, std::string& err) {
                         t.col_indexes[c].emplace(row.values[c], new_idx);
                 }
             }
-            t.rows.push_back(std::move(row));
         }
     } // table lock released
 

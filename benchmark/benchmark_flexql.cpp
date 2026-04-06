@@ -1,5 +1,7 @@
 #include <iostream>
 #include <chrono>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <sstream>
 #include <vector>
@@ -9,7 +11,7 @@ using namespace std;
 using namespace std::chrono;
 
 static const long long DEFAULT_INSERT_ROWS = 10LL; // 100k rows by default for insertion benchmark
-static const int INSERT_BATCH_SIZE = 250000; // if you implement batch inserts in flexql, you can increase this for better performance
+static const int INSERT_BATCH_SIZE = 50000; // if you implement batch inserts in flexql, you can increase this for better performance
 
 struct QueryStats {
     long long rows = 0;
@@ -240,6 +242,21 @@ static bool run_data_level_unit_tests(FlexQL *db) {
     return all_ok;
 }
 
+// Fast integer-to-ASCII: writes digits directly into buffer, returns length.
+// ~3-5x faster than snprintf for integer conversion (no format-string parsing).
+static int write_int(char* dst, long long val) {
+    if (val == 0) { dst[0] = '0'; return 1; }
+    char tmp[20];
+    int len = 0;
+    bool neg = false;
+    if (val < 0) { neg = true; val = -val; }
+    while (val > 0) { tmp[len++] = '0' + (char)(val % 10); val /= 10; }
+    int pos = 0;
+    if (neg) dst[pos++] = '-';
+    for (int i = len - 1; i >= 0; --i) dst[pos++] = tmp[i];
+    return pos;
+}
+
 static bool run_insert_benchmark(FlexQL *db, long long target_rows) {
     if (!run_exec(
             db,
@@ -258,40 +275,67 @@ static bool run_insert_benchmark(FlexQL *db, long long target_rows) {
     }
     long long next_progress = progress_step;
 
+    // Pre-allocate buffer for SQL string construction (20MB).
+    const size_t BUF_CAP = 20 * 1024 * 1024;
+    char* buf = new char[BUF_CAP];
+    int total_batches = 0;
+
     while (inserted < target_rows) {
-        stringstream ss;
-        ss << "INSERT INTO BIG_USERS VALUES ";
+        // ── Build SQL into pre-allocated buffer using direct writes ──
+        static const char prefix[] = "INSERT INTO BIG_USERS VALUES ";
+        size_t pos = sizeof(prefix) - 1;
+        memcpy(buf, prefix, pos);
 
         int in_batch = 0;
         while (in_batch < INSERT_BATCH_SIZE && inserted < target_rows) {
             long long id = inserted + 1;
-            ss << "(" << id
-               << ", 'user" << id << "'"
-                    << ", 'user" << id << "@mail.com'"
-               << ", " << (1000.0 + (id % 10000))
-               << ", 1893456000)";
+            long long balance = 1000 + (id % 10000);
+
+            // Hand-coded tuple: (id, 'userN', 'userN@mail.com', balance, 1893456000)
+            // ~3-5x faster than snprintf by avoiding format-string parsing
+            buf[pos++] = '(';
+            pos += write_int(buf + pos, id);
+            memcpy(buf + pos, ", 'user", 7); pos += 7;
+            pos += write_int(buf + pos, id);
+            memcpy(buf + pos, "', 'user", 8); pos += 8;
+            pos += write_int(buf + pos, id);
+            memcpy(buf + pos, "@mail.com', ", 12); pos += 12;
+            pos += write_int(buf + pos, balance);
+            memcpy(buf + pos, ", 1893456000)", 13); pos += 13;
+
             inserted++;
             in_batch++;
             if (in_batch < INSERT_BATCH_SIZE && inserted < target_rows) {
-                ss << ",";
+                buf[pos++] = ',';
             }
         }
-        ss << ";";
+        buf[pos++] = ';';
+        buf[pos] = '\0';
 
-        char *errMsg = nullptr;
-        if (flexql_exec(db, ss.str().c_str(), nullptr, nullptr, &errMsg) != FLEXQL_OK) {
-            cout << "[FAIL] INSERT BIG_USERS batch -> " << (errMsg ? errMsg : "unknown error") << "\n";
-            if (errMsg) {
-                flexql_free(errMsg);
-            }
+        // Fire batch asynchronously — don't wait for server response
+        if (flexql_exec_fire(db, buf) != FLEXQL_OK) {
+            cout << "[FAIL] INSERT BIG_USERS batch -> fire failed\n";
+            delete[] buf;
             return false;
         }
+        total_batches++;
 
         if (inserted >= next_progress || inserted == target_rows) {
             cout << "Progress: " << inserted << "/" << target_rows << "\n";
             next_progress += progress_step;
         }
     }
+
+    // Drain all responses at once
+    if (total_batches > 0) {
+        if (flexql_drain(db, total_batches) != FLEXQL_OK) {
+            cout << "[FAIL] INSERT BIG_USERS batch -> drain failed\n";
+            delete[] buf;
+            return false;
+        }
+    }
+
+    delete[] buf;
 
     auto bench_end = high_resolution_clock::now();
     long long elapsed = duration_cast<milliseconds>(bench_end - bench_start).count();

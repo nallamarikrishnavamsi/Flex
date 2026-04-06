@@ -19,9 +19,24 @@
 #include <thread>
 #include <vector>
 #include <atomic>
+#include <cstring>
 
 using namespace std;
 using namespace std::chrono;
+
+// Fast integer-to-ASCII: writes digits directly into buffer, returns length.
+static int write_int(char* dst, long long val) {
+    if (val == 0) { dst[0] = '0'; return 1; }
+    char tmp[20];
+    int len = 0;
+    bool neg = false;
+    if (val < 0) { neg = true; val = -val; }
+    while (val > 0) { tmp[len++] = '0' + (char)(val % 10); val /= 10; }
+    int pos = 0;
+    if (neg) dst[pos++] = '-';
+    for (int i = len - 1; i >= 0; --i) dst[pos++] = tmp[i];
+    return pos;
+}
 
 static const int BATCH_SIZE = 50000;
 
@@ -67,11 +82,22 @@ static ThreadResult do_write_work(int thread_id, int rows) {
         int in_batch = 0;
         while (in_batch < BATCH_SIZE && inserted < rows) {
             long long id = base + inserted + 1;
+            long long balance = 1000 + (id % 10000);
             if (in_batch > 0) sql += ',';
-            int n = snprintf(buf, sizeof(buf),
-                "(%lld, 'user%lld', 'user%lld@mail.com', %lld, 1893456000)",
-                id, id, id, 1000 + (id % 10000));
-            sql.append(buf, n);
+            
+            // Fast serialization into buffer
+            int pos = 0;
+            buf[pos++] = '(';
+            pos += write_int(buf + pos, id);
+            memcpy(buf + pos, ", 'user", 7); pos += 7;
+            pos += write_int(buf + pos, id);
+            memcpy(buf + pos, "', 'user", 8); pos += 8;
+            pos += write_int(buf + pos, id);
+            memcpy(buf + pos, "@mail.com', ", 12); pos += 12;
+            pos += write_int(buf + pos, balance);
+            memcpy(buf + pos, ", 1893456000)", 13); pos += 13;
+
+            sql.append(buf, pos);
             inserted++;
             in_batch++;
         }
@@ -163,9 +189,9 @@ static ThreadResult do_mixed_work(int thread_id, int ops) {
     long long base = (long long)thread_id * 100000000LL;
     long long completed = 0;
     // Batching: INSERT_BATCH rows per multi-value INSERT, then SELECT_BATCH PK lookups
-    constexpr int INSERT_BATCH = 125000;  // rows per multi-value INSERT query
-    constexpr int SELECT_BATCH = 125000;  // individual PK SELECT queries
-    constexpr int OPS_PER_CYCLE = INSERT_BATCH + SELECT_BATCH; // 250K ops counted per cycle
+    constexpr int INSERT_BATCH = 50000;  // rows per multi-value INSERT query
+    constexpr int SELECT_BATCH = 50000;  // individual PK SELECT queries
+    constexpr int OPS_PER_CYCLE = INSERT_BATCH + SELECT_BATCH; // 100K ops counted per cycle
     constexpr int PIPE_QUERIES = 1 + SELECT_BATCH;  // 1 INSERT query + 125K SELECTs to drain
 
     string insert_sql;
@@ -189,11 +215,21 @@ static ThreadResult do_mixed_work(int thread_id, int ops) {
             insert_sql += " VALUES ";
             for (int j = 0; j < actual_inserts; ++j) {
                 long long id = ++insert_id;
+                long long balance = 1000 + (id % 10000);
                 if (j > 0) insert_sql += ',';
-                int n = snprintf(buf, sizeof(buf),
-                    "(%lld, 'user%lld', 'user%lld@mail.com', %lld, 1893456000)",
-                    id, id, id, 1000 + (id % 10000));
-                insert_sql.append(buf, n);
+                
+                int pos = 0;
+                buf[pos++] = '(';
+                pos += write_int(buf + pos, id);
+                memcpy(buf + pos, ", 'user", 7); pos += 7;
+                pos += write_int(buf + pos, id);
+                memcpy(buf + pos, "', 'user", 8); pos += 8;
+                pos += write_int(buf + pos, id);
+                memcpy(buf + pos, "@mail.com', ", 12); pos += 12;
+                pos += write_int(buf + pos, balance);
+                memcpy(buf + pos, ", 1893456000)", 13); pos += 13;
+
+                insert_sql.append(buf, pos);
             }
             insert_sql += ';';
             flexql_exec_fire(db, insert_sql.c_str());
