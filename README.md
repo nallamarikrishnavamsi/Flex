@@ -16,9 +16,9 @@ A high-performance SQL-like client-server database engine implemented in C++20.
 
 | Threads | Write | Read | Mixed |
 |---------|-------|------|-------|
-| 1 | 1.79M ops/sec | 2.27M ops/sec | 1.74M ops/sec |
-| 4 | 2.64M ops/sec | 4.61M ops/sec | 5.13M ops/sec |
-| 8 | 2.42M ops/sec | 4.88M ops/sec | 6.83M ops/sec |
+| 1 | 1.61M ops/sec | 2.64M ops/sec | 2.00M ops/sec |
+| 4 | 5.76M ops/sec | 4.69M ops/sec | 5.03M ops/sec |
+| 8 | 2.66M ops/sec | 4.80M ops/sec | 5.95M ops/sec |
 
 ## Prerequisites
 
