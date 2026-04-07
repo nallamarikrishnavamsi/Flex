@@ -506,7 +506,7 @@ This compiles `flexql-server.exe`, `benchmark_flexql.exe`, and `multiclient_benc
 The benchmarks must be run in a PowerShell environment. Set the PATH first to resolve MSYS2 dependencies.
 
 **Terminal 2 — Manual Execution (All Combinations):**
-*⚠️ Important: FlexQL uses gigabytes of RAM for 10M rows. Use the 'Clean Server' commands between benchmarks to automatically kill the old server and restart a fresh one, preventing crashes.*
+*Important: FlexQL uses gigabytes of RAM for 10M rows. Use the 'Clean Server' commands between benchmarks to automatically kill the old server and restart a fresh one, preventing crashes.*
 
 ```powershell
 $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
