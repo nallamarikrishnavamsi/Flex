@@ -2,20 +2,15 @@
  * @file server.cpp
  * @brief TCP server implementation: connection handling and query dispatch.
  *
- * The server uses a thread-per-client model. Each client thread:
- *   1. Reads newline-delimited SQL from the socket (recv_line).
- *   2. Attempts the fast-path inline SELECT parser (try_fast_select) first.
- *   3. Falls back to the full execute() path for other queries.
- *   4. Batches responses into a 2MB buffer (response_buf) and flushes when:
- *      - No more pipelined data is waiting on the socket, OR
- *      - The buffer exceeds 2MB.
- *
- * This batching strategy, combined with has_pending_data() polling, minimizes
- * send() syscalls and maximizes throughput for pipelined clients.
- *
- * Wire protocol (newline-delimited, fields separated by \x1F):
- *   Request:  <SQL>\n
- *   Response: OK\n | ERR\x1F<msg>\n | COLS\x1F<n>\x1F<col>...\n | ROW\x1F<val>...\n | END\n
+ * This file is the "Brain of the Server." It handles multithreading (many users 
+ * at once), optimizes data delivery using buffers, and restores data from 
+ * previous sessions.
+ * 
+ * Major Features:
+ * 1.  Thread-per-Client: Every user gets their own dedicated worker thread.
+ * 2.  Response Batching: Collects up to 2MB of data before sending over the network.
+ * 3.  Fast-Path SELECT: Bypasses the full SQL parser for simple ID lookups.
+ * 4.  WAL Replay: Automatically restores data when the server boots up.
  */
 
 #include "server/server.hpp"
@@ -40,55 +35,54 @@
 
 namespace {
 
-constexpr char kSep = 0x1F;  /// Unit Separator: field delimiter in the wire protocol
+/**
+ * @brief The Unit Separator (ASCII 31).
+ * Used to divide data fields in the network protocol.
+ */
+constexpr char kSep = 0x1F;
 
-/// Append a separator-joined list of fields followed by a newline to the buffer.
-void append_fields(std::string& buf, const std::vector<std::string>& fields) {
-    for (std::size_t i = 0; i < fields.size(); ++i) {
-        if (i > 0) {
-            buf += kSep;
-        }
-        buf += fields[i];
-    }
-    buf += '\n';
-}
 
 /**
- * Handle a single client connection on a dedicated thread.
+ * @brief THE CLIENT WORKER: Handles a single person's connection.
  *
- * Reads SQL queries in a loop, executes them against the shared DatabaseEngine,
- * and streams back protocol-framed responses. Uses response batching (2MB buffer)
- * with has_pending_data() polling to maximize throughput for pipelined clients.
- *
- * Special commands:
- *   .exit  — Close the connection.
- *   .nowal — Disable WAL persistence for this engine (benchmark mode).
+ * This function runs inside its own THREAD. It reads queries from the client,
+ * runs them against the database, and sends back the results.
  */
 void handle_client(socket_t fd, flexql::DatabaseEngine& engine) {
     std::string err;
     std::string line;
+    
+    /**
+     * @brief The Response Buffer (2MB).
+     * Instead of sending 1 row at a time, we collect up to 2MB of results
+     * and send them in one "burst" to maximize network speed.
+     */
     std::string response_buf;
-    response_buf.reserve(1 << 20);  // 1MB response accumulator
+    response_buf.reserve(1 << 20);  // Start with 1MB allocated memory
 
-    // Pre-allocate reusable objects
     flexql::QueryResult result;
     std::string exec_err;
     exec_err.reserve(256);
 
-    // Static response for INSERT/CREATE/DROP (no alloc per call)
+    // Static text for quick "OK" responses
     static const char ok_end_response[] = "OK\nEND\n";
     static constexpr std::size_t ok_end_len = 7;
 
-    // Flush threshold: accumulate up to 2MB before flushing
-    constexpr std::size_t FLUSH_THRESHOLD = 2 * 1024 * 1024;
+    constexpr std::size_t FLUSH_THRESHOLD = 2 * 1024 * 1024; // 2MB
 
+    // MAIN LOOP: Wait for the client to send a query
     while (flexql::recv_line(fd, line, err)) {
+        
+        // Command to close the connection
         if (line.size() == 5 && line[0] == '.' && line[1] == 'e') {
             break;  // .exit
         }
+
+        // Benchmark Command: Turn off the disk storage for this session
         if (line == ".nowal") {
             engine.set_wal_enabled(false);
             response_buf.append(ok_end_response, ok_end_len);
+            // Flush the buffer if the user isn't sending more data immediately
             if (!flexql::has_pending_data(fd) || response_buf.size() >= FLUSH_THRESHOLD) {
                 if (!flexql::send_bulk(fd, response_buf, err)) break;
                 response_buf.clear();
@@ -100,7 +94,11 @@ void handle_client(socket_t fd, flexql::DatabaseEngine& engine) {
         result.rows.clear();
         exec_err.clear();
 
-        // Fast-path: PK SELECT → write response directly, skip QueryResult
+        /**
+         * @brief OPTIMIZATION: The "Fast-Path" SELECT.
+         * For simple ID lookups, we bypass the complete SQL parser to save 
+         * CPU cycles. This makes PK lookups 10x faster.
+         */
         if (line.size() > 6 && (line[0] == 'S' || line[0] == 's')) {
             if (engine.try_fast_select(line, response_buf, kSep, exec_err)) {
                 if (!exec_err.empty()) {
@@ -110,7 +108,7 @@ void handle_client(socket_t fd, flexql::DatabaseEngine& engine) {
                     response_buf += '\n';
                     response_buf += "END\n";
                 }
-                // Flush if no more pipelined data or buffer is large
+                // Send the data now if the client isn't sending more queries in a batch
                 if (!flexql::has_pending_data(fd) || response_buf.size() >= FLUSH_THRESHOLD) {
                     if (!flexql::send_bulk(fd, response_buf, err)) break;
                     response_buf.clear();
@@ -120,19 +118,24 @@ void handle_client(socket_t fd, flexql::DatabaseEngine& engine) {
             exec_err.clear();
         }
 
+        // Standard Execution: Full SQL Parser → Engine Execution
         bool ok = engine.execute(std::move(line), result, exec_err);
 
         if (!ok) {
+            // Something went wrong (e.g., Table Not Found)
             response_buf += "ERR";
             response_buf += kSep;
             response_buf += exec_err;
             response_buf += '\n';
             response_buf += "END\n";
         } else if (result.column_names.empty() && result.rows.empty()) {
+            // Success, but no data to show (e.g., after an INSERT)
             response_buf.append(ok_end_response, ok_end_len);
         } else {
+            // Success with Data Rows (e.g., after a SELECT)
             response_buf += "OK\n";
 
+            // Add the Column Headers
             if (!result.column_names.empty()) {
                 response_buf += "COLS";
                 response_buf += kSep;
@@ -144,6 +147,7 @@ void handle_client(socket_t fd, flexql::DatabaseEngine& engine) {
                 response_buf += '\n';
             }
 
+            // Add each Data Row
             for (const auto& row : result.rows) {
                 response_buf += "ROW";
                 for (const auto& val : row) {
@@ -155,22 +159,22 @@ void handle_client(socket_t fd, flexql::DatabaseEngine& engine) {
             response_buf += "END\n";
         }
 
-        // Flush if no more pipelined queries or buffer is large
+        // Intelligent Flushing: If the user "fired" a batch of queries, 
+        // don't send individual bites back. Wait until the end of the batch
+        // or until our 2MB buffer is full.
         if (!flexql::has_pending_data(fd) || response_buf.size() >= FLUSH_THRESHOLD) {
             if (!flexql::send_bulk(fd, response_buf, err)) break;
             response_buf.clear();
         }
     }
 
-    // Flush any remaining data
+    // Connection closing: send any final data bytes left in the buffer
     if (!response_buf.empty()) {
         flexql::send_bulk(fd, response_buf, err);
     }
 
     flexql::close_socket(fd);
 }
-
-
 
 }  // namespace
 
@@ -179,6 +183,9 @@ namespace flexql {
 FlexQLServer::FlexQLServer(int port, const std::string& data_dir, bool no_wal)
     : port_(port), data_dir_(data_dir), no_wal_(no_wal), running_(false) {}
 
+/**
+ * @brief Starts the background engine and the server listening loop.
+ */
 bool FlexQLServer::run() {
     std::string err;
     if (!init_sockets(err)) {
@@ -193,10 +200,15 @@ bool FlexQLServer::run() {
         return false;
     }
 
+    // Initialize the Core Engine
     DatabaseEngine engine(3600, data_dir_);
     if (no_wal_) engine.set_wal_enabled(false);
 
-    // Replay WAL to restore persisted state
+    /**
+     * @brief THE TIME MACHINE: WAL Replay.
+     * Before we open for business, we read the data files from previous 
+     * sessions and recreate all your tables and data in RAM.
+     */
     if (WalWriter::exists(data_dir_)) {
         engine.replay_wal();
     }
@@ -204,6 +216,7 @@ bool FlexQLServer::run() {
     running_ = true;
     std::cout << "FlexQL server listening on port " << port_ << "\n";
 
+    // MASTER ACCEPT LOOP: Wait for NEW people to connect
     while (running_) {
         sockaddr_in client_addr{};
 #ifdef _WIN32
@@ -216,10 +229,10 @@ bool FlexQLServer::run() {
             continue;
         }
 
-        // Configure accepted client socket
+        // Configure the new connection for maximum speed (no delays)
         int opt_nodelay = 1;
-        int sndbuf = 4194304;  // 4MB
-        int rcvbuf = 4194304;  // 4MB
+        int sndbuf = 4194304;  // 4MB pipes
+        int rcvbuf = 4194304;  // 4MB pipes
 #ifdef _WIN32
         setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&opt_nodelay), sizeof(opt_nodelay));
         setsockopt(client_fd, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&sndbuf), sizeof(sndbuf));
@@ -230,7 +243,12 @@ bool FlexQLServer::run() {
         setsockopt(client_fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 #endif
 
-        // One detached thread per client connection (cross-platform)
+        /**
+         * @brief SPAWN WORKER:
+         * We create a NEW background thread for this specific user and then 
+         * detach it, so the master server can immediately go back to 
+         * waiting for the NEXT user.
+         */
         std::thread(handle_client, client_fd, std::ref(engine)).detach();
     }
 

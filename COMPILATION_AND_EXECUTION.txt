@@ -1,0 +1,122 @@
+## Compilation and Execution
+
+### Prerequisites
+
+- **MSYS2/UCRT64** — Install from [msys2.org](https://www.msys2.org/)
+- **GCC 15+** with C++20 support — Inside MSYS2: `pacman -S mingw-w64-ucrt-x86_64-gcc`
+- **Windows 10/11**
+
+### Environment Setup
+
+Every new PowerShell terminal needs the MSYS2 toolchain in PATH:
+
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+```
+
+> **Note:** `build.bat` sets this automatically for compilation, but you still need it when **running** the executables (they depend on MSYS2 DLLs).
+
+### Build (using build.bat on Windows)
+
+```bash
+cmd /c build.bat
+```
+
+This compiles `flexql-server.exe`, `benchmark_flexql.exe`, and `multiclient_bench.exe` using GCC with `-std=c++20 -O3 -march=native -flto -DNDEBUG`.
+
+The benchmarks must be run in a PowerShell environment. Set the PATH first to resolve MSYS2 dependencies.
+
+**Manual Execution (All Combinations):**
+*Important: FlexQL uses gigabytes of RAM for 10M rows. Use the 'Clean Server' commands between benchmarks to automatically kill the old server and restart a fresh one, preventing crashes.*
+
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+
+# --- CLEAN SERVER COMMAND (Start Fresh) --- #
+Get-Process flexql-server -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\flexql-server.exe" -ArgumentList "--clean", "--nowal" -PassThru -NoNewWindow
+Start-Sleep -Seconds 2
+
+# 1. Run Unit tests (21/21)
+.\benchmark_flexql.exe --unit-test
+
+# --- CLEAN SERVER COMMAND --- #
+Get-Process flexql-server -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\flexql-server.exe" -ArgumentList "--clean", "--nowal" -PassThru -NoNewWindow
+Start-Sleep -Seconds 2
+
+# 2. Run Single-client benchmark (1 thread, 10M rows)
+.\benchmark_flexql.exe 10000000
+
+# --- CLEAN SERVER COMMAND --- #
+Get-Process flexql-server -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\flexql-server.exe" -ArgumentList "--clean", "--nowal" -PassThru -NoNewWindow
+Start-Sleep -Seconds 2
+
+# 3. Multi-client benchmark (1 Thread, Write 10M)
+.\multiclient_bench.exe --threads 1 --rows 10000000 --mode write
+
+# --- CLEAN SERVER COMMAND --- #
+Get-Process flexql-server -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\flexql-server.exe" -ArgumentList "--clean", "--nowal" -PassThru -NoNewWindow
+Start-Sleep -Seconds 2
+
+# 4. Multi-client benchmark (1 Thread, Read 10M)
+.\multiclient_bench.exe --threads 1 --rows 10000000 --mode read
+
+# --- CLEAN SERVER COMMAND --- #
+Get-Process flexql-server -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\flexql-server.exe" -ArgumentList "--clean", "--nowal" -PassThru -NoNewWindow
+Start-Sleep -Seconds 2
+
+# 5. Multi-client benchmark (1 Thread, Mixed 10M)
+.\multiclient_bench.exe --threads 1 --rows 10000000 --mode mixed
+
+# --- CLEAN SERVER COMMAND --- #
+Get-Process flexql-server -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\flexql-server.exe" -ArgumentList "--clean", "--nowal" -PassThru -NoNewWindow
+Start-Sleep -Seconds 2
+
+# 6. Multi-client benchmark (4 Threads, Write 10M)
+.\multiclient_bench.exe --threads 4 --rows 2500000 --mode write
+
+# --- CLEAN SERVER COMMAND --- #
+Get-Process flexql-server -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\flexql-server.exe" -ArgumentList "--clean", "--nowal" -PassThru -NoNewWindow
+Start-Sleep -Seconds 2
+
+# 7. Multi-client benchmark (4 Threads, Read 10M)
+.\multiclient_bench.exe --threads 4 --rows 2500000 --mode read
+
+# --- CLEAN SERVER COMMAND --- #
+Get-Process flexql-server -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\flexql-server.exe" -ArgumentList "--clean", "--nowal" -PassThru -NoNewWindow
+Start-Sleep -Seconds 2
+
+# 8. Multi-client benchmark (4 Threads, Mixed 10M)
+.\multiclient_bench.exe --threads 4 --rows 2500000 --mode mixed
+
+# --- CLEAN SERVER COMMAND --- #
+Get-Process flexql-server -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\flexql-server.exe" -ArgumentList "--clean", "--nowal" -PassThru -NoNewWindow
+Start-Sleep -Seconds 2
+
+# 9. Multi-client benchmark (8 Threads, Write 10M)
+.\multiclient_bench.exe --threads 8 --rows 1250000 --mode write
+
+# --- CLEAN SERVER COMMAND --- #
+Get-Process flexql-server -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\flexql-server.exe" -ArgumentList "--clean", "--nowal" -PassThru -NoNewWindow
+Start-Sleep -Seconds 2
+
+# 10. Multi-client benchmark (8 Threads, Read 10M)
+.\multiclient_bench.exe --threads 8 --rows 1250000 --mode read
+
+# --- CLEAN SERVER COMMAND --- #
+Get-Process flexql-server -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\flexql-server.exe" -ArgumentList "--clean", "--nowal" -PassThru -NoNewWindow
+Start-Sleep -Seconds 2
+
+# 11. Multi-client benchmark (8 Threads, Mixed 10M)
+.\multiclient_bench.exe --threads 8 --rows 1250000 --mode mixed
+```

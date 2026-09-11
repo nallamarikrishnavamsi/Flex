@@ -234,10 +234,10 @@ Thread 1 (Client A)              Thread 2 (Client B)
 Concurrency scaling with the two-level SRWLOCK approach:
 
 | Threads | Write (ops/sec) | Read (ops/sec) | Mixed (ops/sec) |
-|---------|----------------|----------------|------------------|
-| 1       | 650,406        | 1,973,943      | 1,453,065        |
-| 4       | 1,558,846      | 2,791,736      | 2,965,599        |
-| 8       | 2,408,477      | 3,054,367      | 3,487,966        |
+|---------|-----------------|----------------|-----------------|
+| 1       | 1,785,714       | 2,269,632      | 1,742,463       |
+| 4       | 2,638,522       | 4,610,419      | 5,130,836       |
+| 8       | 2,424,242       | 4,882,812      | 6,830,601       |
 
 Read and mixed workloads scale near-linearly because shared (reader) locks allow fully parallel SELECT execution.
 

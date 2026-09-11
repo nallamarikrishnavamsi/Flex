@@ -16,9 +16,9 @@ A high-performance SQL-like client-server database engine implemented in C++20.
 
 | Threads | Write | Read | Mixed |
 |---------|-------|------|-------|
-| 1 | 1.61M ops/sec | 2.64M ops/sec | 2.00M ops/sec |
-| 4 | 5.76M ops/sec | 4.69M ops/sec | 5.03M ops/sec |
-| 8 | 2.66M ops/sec | 4.80M ops/sec | 5.95M ops/sec |
+| 1 | 1.79M ops/sec | 2.27M ops/sec | 1.74M ops/sec |
+| 4 | 2.64M ops/sec | 4.61M ops/sec | 5.13M ops/sec |
+| 8 | 2.42M ops/sec | 4.88M ops/sec | 6.83M ops/sec |
 
 ## Prerequisites
 
@@ -42,7 +42,8 @@ $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
 cmd /c build.bat
 ```
 
-This compiles `flexql-server.exe`, `benchmark_flexql.exe`, and `multiclient_bench.exe`.
+This compiles `flexql-server.exe`, `benchmark_flexql.exe`, `multiclient_bench.exe`,
+`flexql-client.exe`, `smoke_test.exe`, and `functional_test.exe`.
 
 ## Run
 
@@ -88,6 +89,45 @@ $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
 .\multiclient_bench.exe --threads 8 --rows 1250000 --mode write
 .\multiclient_bench.exe --threads 8 --rows 1250000 --mode read
 .\multiclient_bench.exe --threads 8 --rows 1250000 --mode mixed
+```
+
+**Terminal 2 — Interactive REPL client:**
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+.\flexql-client.exe 127.0.0.1 9000
+```
+
+Once connected, type SQL at the `flexql>` prompt and press Enter:
+```
+flexql> CREATE TABLE STUDENT(ID INT, NAME VARCHAR);
+Query executed successfully
+flexql> INSERT INTO STUDENT VALUES (1, 'Alice');
+Query executed successfully
+flexql> INSERT INTO STUDENT VALUES (2, 'Bob');
+Query executed successfully
+flexql> SELECT * FROM STUDENT;
+ID = 1
+NAME = Alice
+
+ID = 2
+NAME = Bob
+
+flexql> .exit
+Connection closed
+```
+
+**Terminal 2 — Run tests:**
+```powershell
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+
+# Basic smoke test (CREATE/INSERT/SELECT)
+.\smoke_test.exe
+
+# Comprehensive functional tests (JOIN, WHERE, TTL, concurrency, callback abort)
+.\functional_test.exe
+
+# Inline unit tests (21/21)
+.\benchmark_flexql.exe --unit-test
 ```
 
 ## Example

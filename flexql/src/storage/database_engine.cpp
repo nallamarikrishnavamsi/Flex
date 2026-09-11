@@ -2,38 +2,27 @@
  * @file database_engine.cpp
  * @brief Core in-memory SQL database engine implementation.
  *
- * This is the largest and most performance-critical file in FlexQL.
- * Major sections:
- *
- * 1. RAII Lock Wrappers (ScopedWriterLock, ScopedReaderLock)
- *    - Platform-abstracted RAII wrappers for SRWLOCK (Windows) / shared_mutex (POSIX).
- *
- * 2. Inline Helper Functions
- *    - Fast numeric validation, integer parsing, condition evaluation, all
- *      designed for zero heap allocation in the hot path.
- *
- * 3. DatabaseEngine Core
- *    - Constructor/destructor: initializes WAL, caches, reaper thread.
- *    - execute(): main entry point dispatching to fast-path or full parser.
- *    - replay_wal() / checkpoint_wal(): WAL recovery and compaction.
- *
- * 4. Fast-Path INSERT (try_fast_insert)
- *    - Parses INSERT SQL with raw pointer arithmetic, zero intermediate allocations.
- *    - Pre-parses int64 PK values and prefetches hash slots for cache locality.
- *    - Three-phase design: (1) parse outside lock, (2) validate, (3) insert under lock.
- *
- * 5. Fast-Path SELECT (try_fast_select)
- *    - Inline SQL parser using pointer arithmetic for PK SELECT queries.
- *    - Bypasses the full SqlParser and LRU cache mutex entirely.
- *    - Writes response directly into the caller's buffer (no QueryResult allocation).
- *
- * 6. Full Execute Path
- *    - execute_create, execute_drop, execute_insert, execute_select.
- *    - Hash join (PostgreSQL-inspired) for INNER JOIN with equality.
- *    - Lazy secondary index building for non-PK WHERE columns.
- *
- * 7. Background Reaper Thread
- *    - Periodically scans tables for expired rows (TTL-based eviction).
+ * This is the "Heart" of FlexQL. It is the most complex file in the project 
+ * because it manages how data is stored, found, protected, and deleted.
+ * 
+ * Major Components inside this file:
+ * 
+ * 1.  READER-WRITER LOCKS: Custom logic that allows 100 people to read data 
+ *     at once, but only 1 person to write at a time (to prevent corruption).
+ * 
+ * 2.  THE REAPER: A background thread that scans the database and deletes 
+ *     "expired" data (TTL) to keep your memory usage low.
+ * 
+ * 3.  TWO-TIER INDEXING:
+ *     - Primary Index: Constant-time (O(1)) lookup for IDs/Primary Keys.
+ *     - Lazy Secondary Index: Built "on-demand" the first time you search 
+ *       a non-indexed column, then saved for later speed.
+ * 
+ * 4.  FAST-PATH OPTIMIZATION: "Shortcuts" that bypass the slow SQL parser 
+ *     for very common actions like simple inserts or ID lookups.
+ * 
+ * 5.  HASH JOINS: An advanced algorithm (inspired by PostgreSQL) that 
+ *     combines two tables instantly rather than comparing every single row.
  */
 
 #include "storage/database_engine.hpp"
@@ -50,9 +39,9 @@
 
 namespace {
 
-// ─── Reader-Writer Lock RAII wrappers (PostgreSQL-inspired) ───
-// SELECTs use shared (reader) lock; writes use exclusive (writer) lock.
-// These wrappers provide exception-safe, platform-abstracted lock management.
+// ─── The Traffic Cop: Reader-Writer Lock RAII wrappers ───
+// These ensure data safety. Shared locks allow multiple readers (SELECT), 
+// while Exclusive locks block everyone so a Writer (INSERT) can safely change data.
 
 /// RAII exclusive (writer) lock: blocks all other readers and writers.
 struct ScopedWriterLock {
@@ -242,7 +231,8 @@ DatabaseEngine::DatabaseEngine(int default_ttl_seconds, const std::string& data_
     // Initialize WAL writer
     wal_ = std::make_unique<WalWriter>(data_dir_);
 
-    // Launch background expiration reaper thread
+    // Step 2: Launch the REAPER thread
+    // This guy runs in the background for the entire life of the database.
     reaper_thread_ = std::thread(&DatabaseEngine::reaper_loop, this);
 }
 
@@ -370,9 +360,10 @@ bool DatabaseEngine::validate_value(ColumnType type, const std::string& value) c
 }
 
 /**
- * Remove expired rows from a table (must hold table writer lock).
- * Rebuilds the primary index and all active secondary indexes from scratch.
- * Uses vector swap to compact memory.
+ * @brief THE CLEANER: Removes expired rows from a table.
+ *
+ * When rows expire (their TTL is up), we have to remove them and then 
+ * REBUILD the indexes so they don't point to "ghost" data.
  */
 void DatabaseEngine::cleanup_expired_locked(Table& table) {
     auto now = std::chrono::system_clock::now();
@@ -429,9 +420,10 @@ bool DatabaseEngine::execute_drop(const DropTableQuery& query, std::string& err)
 }
 
 /**
- * Execute CREATE TABLE: allocates a new Table with pre-reserved row/index capacity.
- * First column is the primary key. INT/DECIMAL PKs use the int64 fast-path in PrimaryIndex.
- * Initializes per-table reader-writer lock and lazy secondary index arrays.
+ * @brief CREATE TABLE Logic.
+ *
+ * We set up a new table in RAM, pre-allocating space so that the first 500,000 
+ * rows we insert don't cause slow memory re-allocations.
  */
 bool DatabaseEngine::execute_create(const CreateTableQuery& query, std::string& err) {
     std::string tname = to_upper_copy(query.table_name);
@@ -533,17 +525,13 @@ bool DatabaseEngine::execute_insert(const InsertQuery& query, std::string& err) 
 // Build hash table on smaller table, probe with larger table → O(N+M).
 
 /**
- * Execute SELECT: supports simple, WHERE, and JOIN queries.
+ * @brief THE SELECT ENGINE: Finding your data.
  *
- * Optimization tiers:
- *   1. Secondary index (O(1) hash lookup) for WHERE col = value on any indexed column.
- *   2. Primary index (O(1)) for WHERE on PK column with equality.
- *   3. Full table scan for non-equality WHERE or no WHERE.
- *   4. Hash join (O(N+M)) for INNER JOIN with equality.
- *   5. Nested-loop join (O(N×M)) for INNER JOIN with non-equality operators.
- *
- * Secondary indexes are built lazily: the first SELECT with WHERE on a non-PK column
- * triggers an exclusive lock upgrade to build the index, then downgrades for the query.
+ * This is the most complex part of the engine. It tries to find the FASTEST 
+ * way to get your data:
+ * 1. If it's a simple search on an indexed column → Constant time!
+ * 2. If it's a search on a non-indexed column → It builds an index lazily!
+ * 3. If there's no index at all → It scans every row (Full Table Scan).
  */
 bool DatabaseEngine::execute_select(const SelectQuery& query, QueryResult& out, std::string& err) {
     auto it = tables_.find(to_upper_copy(query.from_table));

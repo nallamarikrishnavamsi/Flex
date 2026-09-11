@@ -93,8 +93,8 @@ private:
 
     std::unordered_map<std::string, Table> tables_;
     SqlParser parser_;
-    LruCache<ParsedQuery> parse_cache_;
-    LruCache<QueryResult> cache_;
+    LruCache<QueryResult>  cache_;
+    LruCache<ParsedQuery>  parse_cache_;
     int default_ttl_seconds_;
     uint64_t cache_gen_;   // generation when cache was last validated
     std::atomic<uint64_t> write_gen_;   // incremented on every write (insert/create/drop)
